@@ -1,4 +1,5 @@
 import boto3
+import json
 import os
 from boto3.dynamodb.conditions import And, Attr, Key
 from uuid import uuid4
@@ -8,8 +9,8 @@ from pytz import timezone
 
 contact_list = boto3.resource('dynamodb').Table('contact_list')
 
-def _get_username(context):
-    return context['authorizer']['claims']['cognito:username']
+def _get_username(event):
+    return event['requestContext']['authorizer']['claims']['cognito:username']
 
 
 def _find(username, **kwargs):
@@ -32,38 +33,42 @@ def _find(username, **kwargs):
 def _response(contact_lists):
     return {
         'statusCode': 200,
-        'contact_lists': contact_lists
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        },
+        'body': json.dumps(contact_lists)
     }
 
 
-def _get(event, context):
+def _get(request, username):
     contact_lists = _find(
-        username=_get_username(context)
+        username=username
     )
 
     return _response(contact_lists)
 
 
-def _create(event, context):
+def _create(request, username):
     contact_list.put_item(Item={
         'id': 'CL' + str(uuid4().int)[0:16],
-        'list_name': event['list-name'],
-        'username': _get_username(context), 
+        'list_name': request['list_name'],
+        'username': username, 
         'created_at': datetime.now(tz=timezone('America/Denver')).isoformat(),
         'updated_at': datetime.now(tz=timezone('America/Denver')).isoformat(),
     })
         
-    return _get(event, context) 
+    return _get(request, username) 
 
 
 def handle(event, context):
-    operation = context['httpMethod']
+    operation = event['requestContext']['httpMethod']
     operations = {
         'GET' : _get,
         'POST': _create
     }
     if operation in operations:
-        return operations[operation](event, context)
+        return operations[operation](json.loads(event['body']), _get_username(event))
     else:
         raise ValueError(f'Unable to run operation for HTTP METHOD: {operation}')
     
